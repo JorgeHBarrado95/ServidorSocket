@@ -1,0 +1,22 @@
+{
+  "name": "servidorsocket",
+  "version": "1.0.0",
+  "description": "",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JorgeHBarrado95/ServidorSocket.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/JorgeHBarrado95/ServidorSocket/issues"
+  },
+  "homepage": "https://github.com/JorgeHBarrado95/ServidorSocket#readme",
+  "dependencies": {
+    "ws": "^8.18.2"
+  }
+}
