@@ -1,6 +1,6 @@
 const WebSocket = require('ws');
-
-const wss = new WebSocket.Server({ port: 8080 });
+const port = process.env.PORT || 8080;  // Usar el puerto proporcionado por Render
+const wss = new WebSocket.Server({ port });
 
 wss.on('connection', (ws) => {
   console.log('Cliente conectado');
