@@ -13,7 +13,8 @@ const db = admin.database();
 // Store de salas en memoria
 const rooms = new Map();
 
-const wss = new WebSocket.Server({ port: 8080 });
+const port = process.env.PORT || 8080; 
+const wss = new WebSocket.Server({ port });
 
 wss.on('connection', (socket) => {
   socket.id = uuidv4();
