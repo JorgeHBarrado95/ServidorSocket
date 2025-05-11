@@ -1,7 +1,7 @@
 const WebSocket = require('ws');
 const { v4: uuidv4 } = require('uuid');
 const admin = require('firebase-admin');
-const serviceAccount = require('./clave-firebase.json');
+const serviceAccount = JSON.parse(process.env.FIREBASE_CREDENTIALS);
 
 // Inicializa Firebase Admin
 admin.initializeApp({
