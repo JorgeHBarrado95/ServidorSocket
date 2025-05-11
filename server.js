@@ -1,9 +1,10 @@
-const WebSocket = require('ws');
-const { v4: uuidv4 } = require('uuid');
+const admin = require('firebase-admin');
+const serviceAccount = require('./clave-firebase.json'); // tu archivo de clave privada
 
-const wss = new WebSocket.Server({ port: 8080 });
-
-const rooms = new Map(); // roomId -> roomData
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount),
+  databaseURL: 'https://TU_PROJECTO.firebaseio.com' // tu URL de base de datos
+});
 
 wss.on('connection', (socket) => {
   socket.id = uuidv4();
@@ -15,30 +16,48 @@ wss.on('connection', (socket) => {
       const data = JSON.parse(message);
       const { type, payload } = data;
 
-      switch (type) {
-        case 'create-room':
-          handleCreateRoom(payload, socket);
-          break;
-        case 'join-room':
-          handleJoinRoom(payload, socket);
-          break;
-        case 'signal':
-          handleSignal(payload);
-          break;
-        case 'kick':
-          handleKick(payload);
-          break;
-        case 'block':
-          handleBlock(payload);
-          break;
-        case 'leave-room':
-          handleLeaveRoom(payload);
-          break;
-      }
+      // Verificación del token antes de cualquier operación
+      if (payload?.token) {
+        // Verificar el ID token con Firebase Admin SDK
+        admin.auth().verifyIdToken(payload.token)
+          .then(decodedToken => {
+            // El token es válido y ahora puedes obtener los datos del usuario
+            const uid = decodedToken.uid;
+            console.log('Token válido, UID del usuario:', uid);
+            currentUid = uid;
 
-      // Guardamos ID para tracking posterior
-      if (payload?.uid) currentUid = payload.uid;
-      if (payload?.id) currentRoomId = payload.id;
+            // Ahora procesa el resto de la solicitud
+            switch (type) {
+              case 'create-room':
+                handleCreateRoom(payload, socket);
+                break;
+              case 'join-room':
+                handleJoinRoom(payload, socket);
+                break;
+              case 'signal':
+                handleSignal(payload);
+                break;
+              case 'kick':
+                handleKick(payload);
+                break;
+              case 'block':
+                handleBlock(payload);
+                break;
+              case 'leave-room':
+                handleLeaveRoom(payload);
+                break;
+            }
+
+          })
+          .catch(error => {
+            console.error('Token inválido:', error);
+            socket.send(JSON.stringify({ type: 'error', message: 'Token inválido' }));
+            socket.close();
+          });
+      } else {
+        socket.send(JSON.stringify({ type: 'error', message: 'Token requerido' }));
+        socket.close();
+      }
 
     } catch (err) {
       console.error('Mensaje inválido:', err);
@@ -46,26 +65,9 @@ wss.on('connection', (socket) => {
   });
 
   socket.on('close', () => {
-    if (currentRoomId && currentUid) {
-      const room = rooms.get(currentRoomId);
-      if (!room) return;
-
-      if (room.anfitrion.uid === currentUid) {
-        // Anfitrión se fue: cerrar sala
-        room.invitados.forEach(({ socket: s }) => s.close());
-        rooms.delete(currentRoomId);
-        console.log(`Sala ${currentRoomId} eliminada (anfitrión se fue)`);
-      } else {
-        room.invitados.delete(currentUid);
-        console.log(`Invitado ${currentUid} salió de sala ${currentRoomId}`);
-      }
-    }
+    // Lógica para desconexión
   });
 });
-
-// ------------------------
-// Funciones de manejo
-// ------------------------
 
 function handleCreateRoom(data, socket) {
   const { id, estado, capacidad, video, anfitrion } = data;
@@ -85,7 +87,21 @@ function handleCreateRoom(data, socket) {
     bloqueados: new Set(),
   });
 
-  console.log(`Sala creada: ${id}`);
+  // Guardar la sala en Firebase
+  const anfitrionSinToken = { ...anfitrion };
+  delete anfitrionSinToken.token; // Eliminar el token antes de guardarlo en Firebase
+
+  db.ref(`salas/${id}`).set({
+    id,
+    estado,
+    capacidad,
+    video,
+    anfitrion: anfitrionSinToken,
+    invitados: {},
+    bloqueados: {}
+  });
+
+  console.log(`Sala ${id} creada y guardada en Firebase`);
 }
 
 function handleJoinRoom(data, socket) {
@@ -109,50 +125,42 @@ function handleJoinRoom(data, socket) {
 
   room.invitados.set(persona.uid, { persona, socket });
 
-  // Notificar al anfitrión
+  // Guardar el invitado en Firebase sin el token
+  const personaSinToken = { ...persona };
+  delete personaSinToken.token;
+
+  db.ref(`salas/${id}/invitados/${persona.uid}`).set(personaSinToken);
+
   room.anfitrionSocket.send(JSON.stringify({
     type: 'invitado-join',
     payload: persona,
   }));
 
-  console.log(`${persona.nombre} se unió a la sala ${id}`);
+  console.log(`${persona.nombre} se unió a sala ${id}`);
 }
 
-function handleSignal({ roomId, from, to, data }) {
+function handleBlock(data) {
+  const { roomId, uid } = data;
+
   const room = rooms.get(roomId);
   if (!room) return;
 
-  const target =
-    room.anfitrion.uid === to
-      ? room.anfitrionSocket
-      : room.invitados.get(to)?.socket;
+  // Agregar a la lista de bloqueados
+  room.bloqueados.add(uid);
 
-  if (target) {
-    target.send(JSON.stringify({
-      type: 'signal',
-      payload: { from, data },
-    }));
-  }
+  // Guardar el bloqueado en Firebase
+  db.ref(`salas/${roomId}/bloqueados/${uid}`).set(true);
+
+  console.log(`Usuario ${uid} bloqueado en sala ${roomId}`);
 }
 
-function handleKick({ roomId, uid }) {
-  const room = rooms.get(roomId);
-  const guest = room?.invitados.get(uid);
-  if (guest) {
-    guest.socket.close();
-    room.invitados.delete(uid);
-  }
-}
+if (room.anfitrion.uid === currentUid) {
+  // El anfitrión se fue: cerrar sala
+  room.invitados.forEach(({ socket: s }) => s.close());
+  rooms.delete(currentRoomId);
 
-function handleBlock({ roomId, uid }) {
-  const room = rooms.get(roomId);
-  if (room) {
-    room.bloqueados.add(uid);
-    handleKick({ roomId, uid });
-  }
-}
+  // Eliminar la sala de Firebase
+  db.ref(`salas/${currentRoomId}`).remove();
 
-function handleLeaveRoom({ roomId, uid }) {
-  const room = rooms.get(roomId);
-  room?.invitados.delete(uid);
+  console.log(`Sala ${currentRoomId} eliminada (anfitrión se fue)`);
 }
