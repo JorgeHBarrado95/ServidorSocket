@@ -17,9 +17,13 @@ const port = process.env.PORT || 8080;
 const wss = new WebSocket.Server({ port });
 
 wss.on('connection', (socket) => {
+  console.log('Un cliente se ha conectado');
   socket.id = uuidv4();
   let currentRoomId = null;
   let currentUid = null;
+
+  // Enviar mensaje de confirmación al cliente
+  socket.send(JSON.stringify({ type: 'connected', message: 'Conexión establecida con el servidor' }));
 
   socket.on('message', (message) => {
     let data;
