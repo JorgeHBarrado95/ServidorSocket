@@ -63,10 +63,10 @@ wss.on('connection', (socket) => {
       case 'signal':
         handleSignal(contenido);
         break;
-      case 'kick':
+      case "expulsar-invitado":
         handleKick(contenido);
         break;
-      case 'block':
+      case "bloquear-invitado":
         handleBlock(contenido);
         break;
       case 'leave-room':
@@ -213,29 +213,52 @@ function handleSignal(data) {
 }
 
 function handleKick(data) {
-  const { roomId, uid } = data;
-  const room = sala.get(roomId);
+  const { salaId, uid } = data;
+  const room = sala.get(salaId);
   if (!room) return;
 
   const guest = room.invitados.get(uid);
   if (guest) {
+    // Notificar a todos los invitados (excepto el expulsado) y al anfitrión
+    for (const [invitadoUid, { socket: invitadoSocket }] of room.invitados.entries()) {
+      if (invitadoUid !== uid) {
+        invitadoSocket.send(JSON.stringify({
+          type: "invitado-expulsado-bloqueado",
+          uidExpulsado: uid,
+          message: "Se ha expulsado a un invitado de la sala"
+        }));
+      }
+    }
+    room.anfitrionSocket.send(JSON.stringify({
+      type: "invitado-expulsado",
+      uidExpulsado: uid,
+      message: "Se ha expulsado a un invitado de la sala"
+    }));
+
+    // Notificar al expulsado
+    guest.socket.send(JSON.stringify({
+      type: "expulsado",
+      message: "Has sido expulsado de la sala. ¡Adiós!"
+    }));
+
+    // Cerrar socket del expulsado y limpiar
     guest.socket.close();
     room.invitados.delete(uid);
-    db.ref(`Salas/${roomId}/invitados/${uid}`).remove();
-    console.log(`Invitado ${uid} expulsado de sala ${roomId}`);
+    db.ref(`Salas/${salaId}/invitados/${uid}`).remove();
+    console.log(`Invitado ${uid} expulsado de sala ${salaId}`);
   }
 }
 
 function handleBlock(data) {
-  const { roomId, uid } = data;
-  const room = sala.get(roomId);
+  const { salaId, uid } = data;
+  const room = sala.get(salaId);
   if (!room) return;
 
   room.bloqueados.add(uid);
-  db.ref(`Salas/${roomId}/bloqueados/${uid}`).set(true);
+  db.ref(`Salas/${salaId}/bloqueados/${uid}`).set(true);
   // También expulsar si está dentro
-  handleKick({ roomId, uid });
-  console.log(`Usuario ${uid} bloqueado en sala ${roomId}`);
+  handleKick({ salaId, uid });
+  console.log(`Usuario ${uid} bloqueado en sala ${salaId}`);
 }
 
 function handleLeaveRoom(data) {
@@ -249,18 +272,18 @@ function handleLeaveRoom(data) {
 }
 
 function handleChangeCapacity(data, delta) {
-  const salaId = data["id-sala"];
-  const room = sala.get(salaId);
-  if (!room) return;
+  const salaId = data["salaId"];
+  const sala = sala.get(salaId);
+  if (!sala) return;
 
-  room.capacidad = Math.max(1, room.capacidad + delta); // No menos de 1
-  db.ref(`Salas/${salaId}/capacidad`).set(room.capacidad);
+  sala.capacidad = Math.max(1, sala.capacidad + delta); // No menos de 1
+  db.ref(`Salas/${salaId}/capacidad`).set(sala.capacidad);
 
-  notifyRoomUpdate(room, salaId);
+  notifyRoomUpdate(sala, salaId);
 }
 
 function handleChangeEstado(data) {
-  const salaId = data["id-sala"];
+  const salaId = data["salaId"];
   const nuevoEstado = data["estado"];
   const room = sala.get(salaId);
   if (!room) return;
@@ -272,15 +295,6 @@ function handleChangeEstado(data) {
 }
 
 function notifyRoomUpdate(room, salaId) {
-  // Puedes añadir invitados y bloqueados si quieres
-  const salaActualizada = {
-    id: salaId,
-    estado: room.estado,
-    capacidad: room.capacidad,
-    video: room.video,
-    anfitrion: room.anfitrion,
-  };
-
   // // Notifica a anfitrión
   // room.anfitrionSocket.send(JSON.stringify({
   //   type: "actualizacion-sala",
@@ -291,7 +305,6 @@ function notifyRoomUpdate(room, salaId) {
   for (const { socket: invitadoSocket } of room.invitados.values()) {
     invitadoSocket.send(JSON.stringify({
       type: "actualizacion-sala",
-      contenido: salaActualizada,
     }));
   }
 }
