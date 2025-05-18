@@ -263,7 +263,7 @@ function handleBlock(data) {
   db.ref(`Salas/${salaId}/bloqueados/${uid}`).set(true);
   // También expulsar si está dentro
   handleKick({ salaId, uid });
-  console.log(`Usuario ${uid} bloqueado en sala ${salaId}`);
+  console.log(`⛔ Usuario ${uid} bloqueado en sala ${salaId}`);
 }
 
 function handleLeaveRoom(data) {
@@ -277,14 +277,14 @@ function handleLeaveRoom(data) {
     for (const { socket: invitadoSocket } of room.invitados.values()) {
       invitadoSocket.send(JSON.stringify({
         type: "salio-anfitrion",
-        message: "El anfitrión ha abandonado la sala."
+        message: "👑 El anfitrión ha abandonado la sala. La sala se ha cerrado."
       }));
       invitadoSocket.close();
     }
     // Eliminar la sala y de Firebase
     sala.delete(salaId);
     db.ref(`Salas/${salaId}`).remove();
-    console.log(`El anfitrión ${uid} abandonó y la sala ${salaId} fue eliminada`);
+    console.log(`👑 El anfitrión ${uid} abandonó y la sala ${salaId} fue eliminada`);
     return;
   }
 
@@ -293,7 +293,7 @@ function handleLeaveRoom(data) {
   if (invitado) {
     invitado.socket.send(JSON.stringify({
       type: "saliste-sala",
-      message: "Has abandonado la sala."
+      message: "🚪 Has abandonado la sala. ¡Hasta pronto!"
     }));
     invitado.socket.close();
   }
@@ -302,7 +302,7 @@ function handleLeaveRoom(data) {
   room.anfitrionSocket.send(JSON.stringify({
     type: "invitado-salio",
     uid: uid,
-    message: "Un invitado ha abandonado la sala."
+    message: "👤 Un invitado ha abandonado la sala."
   }));
 
   // Notificar a los demás invitados que este invitado ha salido
@@ -311,14 +311,14 @@ function handleLeaveRoom(data) {
       invitadoSocket.send(JSON.stringify({
         type: "invitado-salio",
         uid: uid,
-        message: "Un invitado ha abandonado la sala."
+        message: "👤 Un invitado ha abandonado la sala."
       }));
     }
   }
 
   room.invitados.delete(uid);
   db.ref(`Salas/${salaId}/invitados/${uid}`).remove();
-  console.log(`Invitado ${uid} salió voluntariamente de sala ${salaId}`);
+  console.log(`🚪 Invitado ${uid} salió voluntariamente de sala ${salaId}`);
 }
 
 function handleChangeCapacity(data, delta) {
