@@ -69,7 +69,12 @@ wss.on('connection', (socket) => {
       case "bloquear-invitado":
         handleBlock(contenido);
         break;
-      case 'leave-room':
+      
+      case "videoON":{
+        handleVideoON(contenido);
+        break;
+      }
+      case "abandonar-sala":
         handleLeaveRoom(contenido);
         break;
       default:
@@ -109,7 +114,7 @@ function handleCreateRoom(data, socket) {
   sala.set(id, {
     estado,
     capacidad,
-    video,
+    video: false,
     anfitrion,
     anfitrionSocket: socket,
     invitados: new Map(),
@@ -262,13 +267,58 @@ function handleBlock(data) {
 }
 
 function handleLeaveRoom(data) {
-  const { roomId, uid } = data;
-  const room = sala.get(roomId);
+  const { salaId, uid } = data;
+  const room = sala.get(salaId);
   if (!room) return;
 
+  // Si el que abandona es el anfitrión
+  if (room.anfitrion.uid === uid) {
+    // Notificar y cerrar la conexión de todos los invitados
+    for (const { socket: invitadoSocket } of room.invitados.values()) {
+      invitadoSocket.send(JSON.stringify({
+        type: "salio-anfitrion",
+        message: "El anfitrión ha abandonado la sala."
+      }));
+      invitadoSocket.close();
+    }
+    // Eliminar la sala y de Firebase
+    sala.delete(salaId);
+    db.ref(`Salas/${salaId}`).remove();
+    console.log(`El anfitrión ${uid} abandonó y la sala ${salaId} fue eliminada`);
+    return;
+  }
+
+  // Si es un invitado el que abandona
+  const invitado = room.invitados.get(uid);
+  if (invitado) {
+    invitado.socket.send(JSON.stringify({
+      type: "saliste-sala",
+      message: "Has abandonado la sala."
+    }));
+    invitado.socket.close();
+  }
+
+  // Notificar al anfitrión que un invitado ha salido
+  room.anfitrionSocket.send(JSON.stringify({
+    type: "invitado-salio",
+    uid: uid,
+    message: "Un invitado ha abandonado la sala."
+  }));
+
+  // Notificar a los demás invitados que este invitado ha salido
+  for (const [invitadoUid, { socket: invitadoSocket }] of room.invitados.entries()) {
+    if (invitadoUid !== uid) {
+      invitadoSocket.send(JSON.stringify({
+        type: "invitado-salio",
+        uid: uid,
+        message: "Un invitado ha abandonado la sala."
+      }));
+    }
+  }
+
   room.invitados.delete(uid);
-  db.ref(`Salas/${roomId}/invitados/${uid}`).remove();
-  console.log(`Invitado ${uid} salió voluntariamente de sala ${roomId}`);
+  db.ref(`Salas/${salaId}/invitados/${uid}`).remove();
+  console.log(`Invitado ${uid} salió voluntariamente de sala ${salaId}`);
 }
 
 function handleChangeCapacity(data, delta) {
@@ -307,4 +357,27 @@ function notifyRoomUpdate(room, salaId) {
       type: "actualizacion-sala",
     }));
   }
+}
+
+function handleVideoON(data) {
+  const { salaId } = data;
+  const room = sala.get(salaId);
+  if (!room) return;
+
+  // Cambiar el estado de video a false
+  room.video = false;
+  db.ref(`Salas/${salaId}/video`).set(false);
+
+  // Notificar a todos los invitados
+  for (const { socket: invitadoSocket } of room.invitados.values()) {
+    invitadoSocket.send(JSON.stringify({
+      type: "videoON",
+      message: "El anfitrión ha iniciado la sala."
+    }));
+  }
+  // Notificar al anfitrión 
+  room.anfitrionSocket.send(JSON.stringify({
+    type: "videoON",
+    message: "Has iniciado la sala."
+  }));
 }
