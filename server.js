@@ -15,10 +15,29 @@ try {
 }
 const db = admin.database();
 
+// Elimina salas vacías al iniciar el servidor
+function limpiarSalasVacias() {
+  db.ref('Salas').once('value', (snapshot) => {
+    const salas = snapshot.val();
+    if (!salas) return;
+    Object.entries(salas).forEach(([salaId, salaData]) => {
+      const invitados = salaData.invitados || {};
+      // Si no hay invitados y el anfitrión no está presente (puedes ajustar la lógica si quieres conservar salas con solo anfitrión)
+      if (!invitados || Object.keys(invitados).length === 0) {
+        db.ref(`Salas/${salaId}`).remove();
+        console.log(`🧹 Sala vacía eliminada al iniciar: ${salaId}`);
+      }
+    });
+  });
+}
+
+// Llamar a la función al iniciar el servidor
+limpiarSalasVacias();
+
 // Store de Salas en memoria
 const sala = new Map();
 
-const port = process.env.PORT || 8081; 
+const port = process.env.PORT || 8080; 
 const wss = new WebSocket.Server({ port });
 
 wss.on('connection', (socket) => {
@@ -376,8 +395,8 @@ function handleVideoON(data) {
     }));
   }
   // Notificar al anfitrión 
-  room.anfitrionSocket.send(JSON.stringify({
-    type: "videoON",
-    message: "Has iniciado la sala."
-  }));
+  // room.anfitrionSocket.send(JSON.stringify({
+  //   type: "videoON",
+  //   message: "Has iniciado la sala."
+  // }));
 }
