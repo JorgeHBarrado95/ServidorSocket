@@ -15,14 +15,14 @@ try {
 }
 const db = admin.database();
 
-// Elimina salas vacías al iniciar el servidor
+// Elimina salas vacías 
 function limpiarSalasVacias() {
   db.ref('Salas').once('value', (snapshot) => {
     const salas = snapshot.val();
     if (!salas) return;
     Object.entries(salas).forEach(([salaId, salaData]) => {
       const invitados = salaData.invitados || {};
-      // Si no hay invitados y el anfitrión no está presente (puedes ajustar la lógica si quieres conservar salas con solo anfitrión)
+      // Si no hay invitados y el anfitrión no está presente 
       if (!invitados || Object.keys(invitados).length === 0) {
         db.ref(`Salas/${salaId}`).remove();
         console.log(`🧹 Sala vacía eliminada al iniciar: ${salaId}`);
@@ -31,10 +31,8 @@ function limpiarSalasVacias() {
   });
 }
 
-// Llamar a la función al iniciar el servidor
 limpiarSalasVacias();
 
-// Store de Salas en memoria
 const sala = new Map();
 
 const port = process.env.PORT || 8080; 
@@ -79,7 +77,7 @@ wss.on('connection', (socket) => {
         break;
       case "iniciar-video":
         break;
-      case 'signal':
+      case "signal":
         handleSignal(contenido);
         break;
       case "expulsar-invitado":
@@ -123,14 +121,14 @@ wss.on('connection', (socket) => {
 // --- Handlers ---
 
 function handleCreateRoom(data, socket) {
-  const { id, estado, capacidad, video, anfitrion } = data;
+  const { id: salaId, estado, capacidad, video, anfitrion } = data;
 
-  if (sala.has(id)) {
+  if (sala.has(salaId)) {
     socket.send(JSON.stringify({ type: "error", message: "Sala ya existe" }));
     return;
   }
 
-  sala.set(id, {
+  sala.set(salaId, {
     estado,
     capacidad,
     video: false,
@@ -140,43 +138,42 @@ function handleCreateRoom(data, socket) {
     bloqueados: new Set(),
   });
 
-  currentUid = anfitrion.uid; // Asignar el UID del anfitrión
-  currentRoomId = id; // Asignar el ID de la sala al anfitrión
+  currentUid = anfitrion.uid;
+  currentRoomId = salaId;
 
   // Guardar la sala en Firebase (sin token)
   const anfitrionSinToken = { ...anfitrion };
   delete anfitrionSinToken.token;
 
-  db.ref(`Salas/${id}`).set({
-    id,
+  db.ref(`Salas/${salaId}`).set({
+    id: salaId,
     estado,
     capacidad,
-    video,
+    video: false,
     anfitrion: anfitrionSinToken,
     invitados: {},
     bloqueados: {}
   });
 
-
   socket.send(JSON.stringify({
     type: "sala-creada",
-    message: `La sala ${id} ha sido creada exitosamente.`,
-    id: id
+    message: `La sala ${salaId} ha sido creada exitosamente.`,
+    id: salaId
   }));
 
-  console.log(`Sala #${id} creada y guardada en Firebase`);
+  console.log(`Sala #${salaId} creada y guardada en Firebase`);
 }
 
 function handleJoinRoom(data, socket) {
-  const { "id-sala": salaId, "persona": persona } = data;
-  const room = sala.get(salaId); // Corregido: usar el Map global 'sala'
+  const { "id-sala": salaId, persona } = data;
+  const room = sala.get(salaId);
 
   if (!room) {
-    socket.send(JSON.stringify({ type: "error", message: "Sala no existe" })); 
+    socket.send(JSON.stringify({ type: "error", message: "Sala no existe" }));
     return;
   }
   if (room.bloqueados.has(persona.uid)) {
-    socket.send(JSON.stringify({ type: "error", message: "Usuario bloqueado" })); 
+    socket.send(JSON.stringify({ type: "error", message: "Usuario bloqueado" }));
     return;
   }
   if (room.invitados.size >= room.capacidad) {
@@ -214,13 +211,12 @@ function handleJoinRoom(data, socket) {
     }
   }
 
-
   console.log(`${persona.nombre} se unió a sala ${salaId}`);
 }
 
 function handleSignal(data) {
-  const { roomId, from, to, signalData } = data;
-  const room = sala.get(roomId);
+  const { salaId, from, to, signalData } = data;
+  const room = sala.get(salaId);
   if (!room) return;
 
   const targetSocket =
@@ -241,8 +237,8 @@ function handleKick(data) {
   const room = sala.get(salaId);
   if (!room) return;
 
-  const guest = room.invitados.get(uid);
-  if (guest) {
+  const invitado = room.invitados.get(uid);
+  if (invitado) {
     // Notificar a todos los invitados (excepto el expulsado) y al anfitrión
     for (const [invitadoUid, { socket: invitadoSocket }] of room.invitados.entries()) {
       if (invitadoUid !== uid) {
@@ -260,13 +256,13 @@ function handleKick(data) {
     }));
 
     // Notificar al expulsado
-    guest.socket.send(JSON.stringify({
+    invitado.socket.send(JSON.stringify({
       type: "expulsado",
       message: "Has sido expulsado de la sala. ¡Adiós!"
     }));
 
     // Cerrar socket del expulsado y limpiar
-    guest.socket.close();
+    invitado.socket.close();
     room.invitados.delete(uid);
     db.ref(`Salas/${salaId}/invitados/${uid}`).remove();
     console.log(`Invitado ${uid} expulsado de sala ${salaId}`);
@@ -324,7 +320,7 @@ function handleLeaveRoom(data) {
     message: "👤 Un invitado ha abandonado la sala."
   }));
 
-  // Notificar a los demás invitados que este invitado ha salido
+  // Notificar a los demas invitados q este invitado ha salido
   for (const [invitadoUid, { socket: invitadoSocket }] of room.invitados.entries()) {
     if (invitadoUid !== uid) {
       invitadoSocket.send(JSON.stringify({
@@ -342,13 +338,13 @@ function handleLeaveRoom(data) {
 
 function handleChangeCapacity(data, delta) {
   const salaId = data["salaId"];
-  const sala = sala.get(salaId);
-  if (!sala) return;
+  const room = sala.get(salaId);
+  if (!room) return;
 
-  sala.capacidad = Math.max(1, sala.capacidad + delta); // No menos de 1
-  db.ref(`Salas/${salaId}/capacidad`).set(sala.capacidad);
+  room.capacidad = Math.max(1, room.capacidad + delta); // No menos de 1
+  db.ref(`Salas/${salaId}/capacidad`).set(room.capacidad);
 
-  notifyRoomUpdate(sala, salaId);
+  notifyRoomUpdate(room, salaId);
 }
 
 function handleChangeEstado(data) {
@@ -364,13 +360,6 @@ function handleChangeEstado(data) {
 }
 
 function notifyRoomUpdate(room, salaId) {
-  // // Notifica a anfitrión
-  // room.anfitrionSocket.send(JSON.stringify({
-  //   type: "actualizacion-sala",
-  //   contenido: salaActualizada,
-  // }));
-
-  // Notifica a todos los invitados
   for (const { socket: invitadoSocket } of room.invitados.values()) {
     invitadoSocket.send(JSON.stringify({
       type: "actualizacion-sala",
@@ -394,9 +383,4 @@ function handleVideoON(data) {
       message: "El anfitrión ha iniciado la sala."
     }));
   }
-  // Notificar al anfitrión 
-  // room.anfitrionSocket.send(JSON.stringify({
-  //   type: "videoON",
-  //   message: "Has iniciado la sala."
-  // }));
 }
