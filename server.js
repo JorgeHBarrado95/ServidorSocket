@@ -1,3 +1,92 @@
+/*
+ * Servidor de gestión de salas de videollamadas (PartyView)
+ * ---------------------------------------------------------
+ * Autor: Jorge (TFG)
+ * Fecha: 2025-05-25
+ *
+ * Descripción general:
+ * Este servidor Node.js permite la gestión de salas de videollamadas en tiempo real usando WebSocket y Firebase Realtime Database.
+ * Los usuarios pueden crear salas, unirse, abandonar, expulsar, bloquear, y recibir notificaciones en tiempo real sobre los eventos de la sala.
+ * El servidor asegura la persistencia de las salas y la limpieza automática de salas vacías.
+ *
+ * Funcionalidades principales:
+ * - Crear, unirse y abandonar salas de videollamada.
+ * - Expulsar y bloquear invitados.
+ * - Notificaciones en tiempo real a anfitrión e invitados (unión, salida, expulsión, bloqueo, cierre de sala).
+ * - Gestión de capacidad y estado de la sala.
+ * - Persistencia de datos en Firebase y limpieza de salas vacías al iniciar.
+ * - Mensajes enriquecidos con emojis para mejor experiencia de usuario.
+ *
+ * Estructura y flujo principal:
+ * 1. Inicialización de Firebase y WebSocket Server.
+ * 2. Limpieza de salas vacías en Firebase al arrancar.
+ * 3. Gestión de conexiones WebSocket: cada cliente se identifica y puede enviar mensajes de distintos tipos (crear, unirse, abandonar, etc.).
+ * 4. Handlers para cada tipo de evento, con notificaciones a los sockets implicados y actualización en Firebase.
+ * 5. Limpieza y cierre de salas e invitados tanto en memoria como en Firebase.
+ *
+ * Glosario de variables clave:
+ * - sala: Map local que almacena las salas activas en memoria.
+ * - salaId: Identificador único de la sala (string).
+ * - room: Instancia de sala en memoria (objeto con anfitrión, invitados, etc.).
+ * - anfitrion: Objeto usuario anfitrión de la sala.
+ * - invitados: Map de invitados activos en la sala.
+ * - bloqueados: Set de uids bloqueados en la sala.
+ * - currentRoomId/currentUid: Variables de contexto por socket para saber a qué sala/usuario pertenece la conexión.
+ *
+ * Notas de despliegue y uso:
+ * - Para conectar desde móvil, usar la IP local del servidor y el puerto configurado.
+ * - El archivo clave-firebase.json debe contener las credenciales de Firebase y estar en la raíz del proyecto.
+ * - El servidor puede desplegarse en plataformas como Railway, Render o Glitch (ver README para detalles y advertencias de seguridad).
+ *
+ * Seguridad:
+ * - No exponer clave-firebase.json en repositorios públicos.
+ * - Considerar autenticación y validación de usuarios en producción.
+ *
+ * Contacto y soporte:
+ * - Para dudas o mejoras, contactar con el autor del TFG.
+ */
+
+// -----------------------------------------------------------------------------
+// server.js
+// Servidor de videollamadas con WebSocket y Firebase para gestión de salas
+// -----------------------------------------------------------------------------
+//
+// Este archivo implementa un servidor Node.js que permite la creación y gestión
+// de salas de videollamadas en tiempo real, usando WebSocket para la comunicación
+// bidireccional con los clientes y Firebase Realtime Database para persistencia.
+//
+// FUNCIONALIDAD PRINCIPAL:
+// - Crear, unir, abandonar, expulsar y bloquear usuarios en salas de videollamada.
+// - Notificaciones en tiempo real a anfitrión e invitados sobre eventos relevantes.
+// - Limpieza automática de salas vacías al iniciar el servidor.
+// - Sincronización de estado de salas e invitados con Firebase.
+//
+// ESTRUCTURA PRINCIPAL:
+// - Módulos requeridos: WebSocket, uuid, firebase-admin, serviceAccount.
+// - Inicialización de Firebase y WebSocket Server.
+// - Mapa en memoria 'sala' para gestión rápida de salas activas.
+// - Handlers para cada tipo de evento recibido por WebSocket.
+//
+// FLUJO GENERAL:
+// 1. Al iniciar, limpia salas vacías en Firebase.
+// 2. Escucha conexiones WebSocket entrantes.
+// 3. Gestiona eventos: crear sala, unirse, abandonar, expulsar, bloquear, etc.
+// 4. Sincroniza cambios en tiempo real con Firebase y notifica a los clientes.
+//
+// GLOSARIO DE VARIABLES CLAVE:
+// - sala: Map<string, Sala>  // Mapa de salas activas en memoria
+// - salaId: string           // Identificador único de la sala
+// - anfitrion: {uid, ...}    // Objeto usuario anfitrión
+// - invitados: Map<uid, {persona, socket}> // Invitados conectados
+// - bloqueados: Set<uid>     // UIDs bloqueados en la sala
+// - currentRoomId, currentUid: variables de sesión por socket
+//
+// NOTA:
+// - El archivo clave-firebase.json debe contener las credenciales de Firebase.
+// - Para conectar desde móvil, usar la IP local del servidor.
+//
+// -----------------------------------------------------------------------------
+
 const WebSocket = require('ws');
 const { v4: uuidv4 } = require('uuid');
 const admin = require('firebase-admin');
@@ -15,7 +104,10 @@ try {
 }
 const db = admin.database();
 
-// Elimina salas vacías 
+/**
+ * Elimina todas las salas vacías de Firebase al iniciar el servidor.
+ * Una sala se considera vacía si no tiene invitados y el anfitrión no está presente.
+ */
 function limpiarSalasVacias() {
   db.ref('Salas').once('value', (snapshot) => {
     const salas = snapshot.val();
@@ -38,6 +130,11 @@ const sala = new Map();
 const port = process.env.PORT || 8080; 
 const wss = new WebSocket.Server({ port });
 
+/**
+ * Handler principal de conexión WebSocket.
+ * Asigna un id único al socket y gestiona los eventos recibidos.
+ * Envía confirmación de conexión y delega en handlers según el tipo de mensaje.
+ */
 wss.on('connection', (socket) => {
   console.log('Un cliente se ha conectado');
   socket.id = uuidv4();
@@ -61,38 +158,35 @@ wss.on('connection', (socket) => {
 
     switch (type) {
       case "crear-sala":
-        handleCreateRoom(contenido, socket);
+        handleCrearSala(contenido, socket);
         break;
       case "unirse-sala":
-        handleJoinRoom(contenido, socket);
+        handleUnirseSala(contenido, socket);
         break;
       case "subir-capacidad":
-        handleChangeCapacity(contenido, 1);
+        handleCambiarCapacidad(contenido, 1);
         break;
       case "bajar-capacidad":
-        handleChangeCapacity(contenido, -1);
+        handleCambiarCapacidad(contenido, -1);
         break;
       case "cambiar-estado":
-        handleChangeEstado(contenido);
-        break;
-      case "iniciar-video":
+        handleCambiarEstado(contenido);
         break;
       case "signal":
         handleSignal(contenido);
         break;
       case "expulsar-invitado":
-        handleKick(contenido);
+        handleExpulsar(contenido);
         break;
       case "bloquear-invitado":
-        handleBlock(contenido);
+        handleBloquear(contenido);
         break;
-      
       case "videoON":{
         handleVideoON(contenido);
         break;
       }
       case "abandonar-sala":
-        handleLeaveRoom(contenido);
+        handleSalirSala(contenido);
         break;
       default:
         socket.send(JSON.stringify({ type: 'error', message: 'Tipo inválido' }));
@@ -120,7 +214,13 @@ wss.on('connection', (socket) => {
 
 // --- Handlers ---
 
-function handleCreateRoom(data, socket) {
+/**
+ * Crea una nueva sala y la guarda en memoria y en Firebase.
+ * Notifica al anfitrión la creación exitosa.
+ * @param {Object} data - Datos de la sala y anfitrión
+ * @param {WebSocket} socket - Socket del anfitrión
+ */
+function handleCrearSala(data, socket) {
   const { id: salaId, estado, capacidad, video, anfitrion } = data;
 
   if (sala.has(salaId)) {
@@ -164,7 +264,13 @@ function handleCreateRoom(data, socket) {
   console.log(`Sala #${salaId} creada y guardada en Firebase`);
 }
 
-function handleJoinRoom(data, socket) {
+/**
+ * Permite a un invitado unirse a una sala existente.
+ * Notifica al anfitrión, al propio invitado y al resto de invitados.
+ * @param {Object} data - Datos de la sala e invitado
+ * @param {WebSocket} socket - Socket del invitado
+ */
+function handleUnirseSala(data, socket) {
   const { "id-sala": salaId, persona } = data;
   const room = sala.get(salaId);
 
@@ -214,6 +320,10 @@ function handleJoinRoom(data, socket) {
   console.log(`${persona.nombre} se unió a sala ${salaId}`);
 }
 
+/**
+ * Reenvía señales WebRTC entre usuarios de la sala (anfitrión/invitados).
+ * @param {Object} data - Datos de señalización (salaId, from, to, signalData)
+ */
 function handleSignal(data) {
   const { salaId, from, to, signalData } = data;
   const room = sala.get(salaId);
@@ -232,14 +342,19 @@ function handleSignal(data) {
   }
 }
 
-function handleKick(data) {
+/**
+ * Expulsa a un invitado de la sala, notificando a todos los implicados.
+ * Elimina al invitado de memoria y de Firebase.
+ * @param {Object} data - salaId y uid del invitado a expulsar
+ */
+function handleExpulsar(data) {
   const { salaId, uid } = data;
   const room = sala.get(salaId);
   if (!room) return;
 
   const invitado = room.invitados.get(uid);
   if (invitado) {
-    // Notificar a todos los invitados (excepto el expulsado) y al anfitrión
+    // Notificar a todos los invitados (excepto el expulsado)
     for (const [invitadoUid, { socket: invitadoSocket }] of room.invitados.entries()) {
       if (invitadoUid !== uid) {
         invitadoSocket.send(JSON.stringify({
@@ -249,11 +364,6 @@ function handleKick(data) {
         }));
       }
     }
-    room.anfitrionSocket.send(JSON.stringify({
-      type: "invitado-expulsado",
-      uidExpulsado: uid,
-      message: "Se ha expulsado a un invitado de la sala"
-    }));
 
     // Notificar al expulsado
     invitado.socket.send(JSON.stringify({
@@ -269,7 +379,11 @@ function handleKick(data) {
   }
 }
 
-function handleBlock(data) {
+/**
+ * Bloquea a un usuario en la sala (añade a bloqueados y lo expulsa si está dentro).
+ * @param {Object} data - salaId y uid del usuario a bloquear
+ */
+function handleBloquear(data) {
   const { salaId, uid } = data;
   const room = sala.get(salaId);
   if (!room) return;
@@ -277,11 +391,17 @@ function handleBlock(data) {
   room.bloqueados.add(uid);
   db.ref(`Salas/${salaId}/bloqueados/${uid}`).set(true);
   // También expulsar si está dentro
-  handleKick({ salaId, uid });
+  handleExpulsar({ salaId, uid });
   console.log(`⛔ Usuario ${uid} bloqueado en sala ${salaId}`);
 }
 
-function handleLeaveRoom(data) {
+/**
+ * Permite a un usuario (anfitrión o invitado) abandonar la sala.
+ * Si es el anfitrión, cierra la sala y notifica a todos.
+ * Si es invitado, notifica a anfitrión y resto de invitados.
+ * @param {Object} data - salaId y uid del usuario que abandona
+ */
+function handleSalirSala(data) {
   const { salaId, uid } = data;
   const room = sala.get(salaId);
   if (!room) return;
@@ -336,7 +456,13 @@ function handleLeaveRoom(data) {
   console.log(`🚪 Invitado ${uid} salió voluntariamente de sala ${salaId}`);
 }
 
-function handleChangeCapacity(data, delta) {
+/**
+ * Cambia la capacidad máxima de la sala (aumenta o disminuye).
+ * Notifica a todos los invitados la actualización.
+ * @param {Object} data - salaId
+ * @param {number} delta - Incremento (+1) o decremento (-1)
+ */
+function handleCambiarCapacidad(data, delta) {
   const salaId = data["salaId"];
   const room = sala.get(salaId);
   if (!room) return;
@@ -347,7 +473,12 @@ function handleChangeCapacity(data, delta) {
   notifyRoomUpdate(room, salaId);
 }
 
-function handleChangeEstado(data) {
+/**
+ * Cambia el estado de la sala (por ejemplo, abierta/cerrada).
+ * Notifica a todos los invitados la actualización.
+ * @param {Object} data - salaId y nuevo estado
+ */
+function handleCambiarEstado(data) {
   const salaId = data["salaId"];
   const nuevoEstado = data["estado"];
   const room = sala.get(salaId);
@@ -359,6 +490,11 @@ function handleChangeEstado(data) {
   notifyRoomUpdate(room, salaId);
 }
 
+/**
+ * Notifica a todos los invitados de la sala que ha habido una actualización.
+ * @param {Object} room - Instancia de la sala
+ * @param {string} salaId - Identificador de la sala
+ */
 function notifyRoomUpdate(room, salaId) {
   for (const { socket: invitadoSocket } of room.invitados.values()) {
     invitadoSocket.send(JSON.stringify({
@@ -367,6 +503,10 @@ function notifyRoomUpdate(room, salaId) {
   }
 }
 
+/**
+ * Marca el inicio de la sala (video ON) y notifica a todos los invitados.
+ * @param {Object} data - salaId
+ */
 function handleVideoON(data) {
   const { salaId } = data;
   const room = sala.get(salaId);
